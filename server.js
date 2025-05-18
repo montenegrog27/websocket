@@ -7,7 +7,6 @@ const port = process.env.PORT || 3001;
 const server = http.createServer();
 const wss = new WebSocketServer({ server });
 
-// Map<trackingId, Set<WebSocket>>
 const trackingGroups = new Map();
 
 wss.on('connection', (ws) => {
