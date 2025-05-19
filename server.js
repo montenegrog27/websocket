@@ -1,18 +1,26 @@
+// server.js
 import { WebSocketServer } from 'ws';
 import http from 'http';
 import dotenv from 'dotenv';
+import { initializeApp, applicationDefault } from 'firebase-admin/app';
+import { getFirestore } from 'firebase-admin/firestore';
+
 dotenv.config();
 
 const port = process.env.PORT || 3001;
 const server = http.createServer();
 const wss = new WebSocketServer({ server });
 
+// Inicializar Firebase Admin
+initializeApp({ credential: applicationDefault() });
+const db = getFirestore();
+
 const trackingGroups = new Map();
 
 wss.on('connection', (ws) => {
   let joinedTrackingId = null;
 
-  ws.on('message', (msg) => {
+  ws.on('message', async (msg) => {
     try {
       const data = JSON.parse(msg);
 
@@ -24,10 +32,27 @@ wss.on('connection', (ws) => {
           trackingGroups.set(joinedTrackingId, new Set());
         }
         trackingGroups.get(joinedTrackingId).add(ws);
+
+        // Consultar estado actual del pedido y enviarlo
+        const ordersRef = db.collection('orders');
+        const snapshot = await ordersRef
+          .where('trackingId', '==', joinedTrackingId)
+          .limit(1)
+          .get();
+
+        if (!snapshot.empty) {
+          const order = snapshot.docs[0].data();
+          ws.send(
+            JSON.stringify({
+              type: 'status',
+              status: order.status || 'preparing',
+            })
+          );
+        }
         return;
       }
 
-      // Enviar ubicación
+      // Enviar ubicación a todos los clientes conectados al trackingId
       if (data.type === 'location' && data.trackingId && data.lat && data.lng) {
         const group = trackingGroups.get(data.trackingId);
         if (group) {
