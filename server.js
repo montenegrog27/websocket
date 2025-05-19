@@ -5,7 +5,7 @@ import admin from 'firebase-admin';
 
 dotenv.config();
 
-// ✅ Inicializar Firebase Admin con credenciales desde variable de entorno
+// ✅ Inicializar Firebase Admin con credenciales desde variable de entorn
 if (!admin.apps.length) {
   const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
   admin.initializeApp({
