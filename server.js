@@ -1,19 +1,22 @@
-// server.js
 import { WebSocketServer } from 'ws';
 import http from 'http';
 import dotenv from 'dotenv';
-import { initializeApp, applicationDefault } from 'firebase-admin/app';
-import { getFirestore } from 'firebase-admin/firestore';
+import admin from 'firebase-admin';
 
 dotenv.config();
+
+// ✅ Inicializar Firebase Admin con credenciales desde variable de entorno
+if (!admin.apps.length) {
+  const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+  admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount),
+  });
+}
+const db = admin.firestore();
 
 const port = process.env.PORT || 3001;
 const server = http.createServer();
 const wss = new WebSocketServer({ server });
-
-// Inicializar Firebase Admin
-initializeApp({ credential: applicationDefault() });
-const db = getFirestore();
 
 const trackingGroups = new Map();
 
@@ -33,7 +36,7 @@ wss.on('connection', (ws) => {
         }
         trackingGroups.get(joinedTrackingId).add(ws);
 
-        // Consultar estado actual del pedido y enviarlo
+        // Obtener estado del pedido
         const ordersRef = db.collection('orders');
         const snapshot = await ordersRef
           .where('trackingId', '==', joinedTrackingId)
@@ -52,7 +55,7 @@ wss.on('connection', (ws) => {
         return;
       }
 
-      // Enviar ubicación a todos los clientes conectados al trackingId
+      // Enviar ubicación
       if (data.type === 'location' && data.trackingId && data.lat && data.lng) {
         const group = trackingGroups.get(data.trackingId);
         if (group) {
