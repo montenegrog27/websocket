@@ -5,7 +5,7 @@ import admin from 'firebase-admin';
 
 dotenv.config();
 
-// ✅ Inicializar Firebase Admin con credenciales desde variable de entorn
+// ✅ Inicializar Firebase Admin con variable FIREBASE_SERVICE_ACCOUNT
 if (!admin.apps.length) {
   const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
   admin.initializeApp({
@@ -27,7 +27,7 @@ wss.on('connection', (ws) => {
     try {
       const data = JSON.parse(msg);
 
-      // Unirse a un trackingId
+      // Cliente se une a un trackingId
       if (data.type === 'join' && data.trackingId) {
         joinedTrackingId = data.trackingId;
 
@@ -36,15 +36,15 @@ wss.on('connection', (ws) => {
         }
         trackingGroups.get(joinedTrackingId).add(ws);
 
-        // Obtener estado del pedido
-        const ordersRef = db.collection('orders');
-        const snapshot = await ordersRef
+        // ✅ Enviar estado inicial del pedido al cliente
+        const snap = await db
+          .collection('orders')
           .where('trackingId', '==', joinedTrackingId)
           .limit(1)
           .get();
 
-        if (!snapshot.empty) {
-          const order = snapshot.docs[0].data();
+        if (!snap.empty) {
+          const order = snap.docs[0].data();
           ws.send(
             JSON.stringify({
               type: 'status',
@@ -52,10 +52,11 @@ wss.on('connection', (ws) => {
             })
           );
         }
+
         return;
       }
 
-      // Enviar ubicación
+      // 🔁 Recibir ubicación del repartidor y reenviar a los suscriptores
       if (data.type === 'location' && data.trackingId && data.lat && data.lng) {
         const group = trackingGroups.get(data.trackingId);
         if (group) {
@@ -73,7 +74,7 @@ wss.on('connection', (ws) => {
         }
       }
     } catch (err) {
-      console.error('Error handling message:', err);
+      console.error('❌ Error handling message:', err);
     }
   });
 
