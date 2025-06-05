@@ -1,3 +1,5 @@
+
+
 import { WebSocketServer } from 'ws';
 import http from 'http';
 import dotenv from 'dotenv';
@@ -6,15 +8,14 @@ import url from 'url';
 
 dotenv.config();
 
-if (!admin.apps.length) {
-  admin.initializeApp({
-    credential: admin.credential.cert({
-      projectId: process.env.FIREBASE_PROJECT_ID,
-      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-      privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
-    }),
-  });
-}
+const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+
+admin.initializeApp({
+  credential: admin.credential.cert({
+    ...serviceAccount,
+    privateKey: serviceAccount.private_key.replace(/\\n/g, "\n"),
+  }),
+});
 
 const db = admin.firestore();
 const port = process.env.PORT || 3001;
@@ -22,11 +23,13 @@ const server = http.createServer();
 
 const wss = new WebSocketServer({ server });
 
-const trackingGroups = new Map(); // Para seguimiento de pedidos
-const allClients = new Set(); // Para WhatsApp inbox
+const trackingGroups = new Map(); // seguimiento por trackingId
+const branchGroups = new Map(); // seguimiento por sucursal (para cocina)
+const allClients = new Set();
 
 wss.on('connection', (ws) => {
   let joinedTrackingId = null;
+  let joinedBranch = null;
 
   allClients.add(ws);
 
@@ -34,7 +37,7 @@ wss.on('connection', (ws) => {
     try {
       const data = JSON.parse(msg);
 
-      // Cliente se une a un trackingId específico
+      // 🔸 Cliente quiere seguir un pedido por trackingId
       if (data.type === 'join' && data.trackingId) {
         joinedTrackingId = data.trackingId;
 
@@ -43,7 +46,6 @@ wss.on('connection', (ws) => {
         }
         trackingGroups.get(joinedTrackingId).add(ws);
 
-        // Enviar estado actual del pedido
         const snap = await db
           .collection('orders')
           .where('trackingId', '==', joinedTrackingId)
@@ -63,7 +65,18 @@ wss.on('connection', (ws) => {
         return;
       }
 
-      // Reenviar ubicación del repartidor
+      // 🔸 Cliente se une a una sucursal (KDS)
+      if (data.type === 'join-branch' && data.branch) {
+        joinedBranch = data.branch;
+
+        if (!branchGroups.has(joinedBranch)) {
+          branchGroups.set(joinedBranch, new Set());
+        }
+        branchGroups.get(joinedBranch).add(ws);
+        return;
+      }
+
+      // 🔸 Ubicación del rider
       if (data.type === 'location' && data.trackingId && data.lat && data.lng) {
         const group = trackingGroups.get(data.trackingId);
         if (group) {
@@ -87,21 +100,51 @@ wss.on('connection', (ws) => {
 
   ws.on('close', () => {
     allClients.delete(ws);
+
     if (joinedTrackingId && trackingGroups.has(joinedTrackingId)) {
       trackingGroups.get(joinedTrackingId).delete(ws);
       if (trackingGroups.get(joinedTrackingId).size === 0) {
         trackingGroups.delete(joinedTrackingId);
       }
     }
+
+    if (joinedBranch && branchGroups.has(joinedBranch)) {
+      branchGroups.get(joinedBranch).delete(ws);
+      if (branchGroups.get(joinedBranch).size === 0) {
+        branchGroups.delete(joinedBranch);
+      }
+    }
   });
 });
 
-// 📩 Endpoint HTTP para notificar que hay nuevos mensajes de WhatsApp
+// 🔁 Escuchar en Firestore cambios en órdenes activas
+db.collection("orders")
+  .where("status", "in", ["ready_to_send", "preparing"])
+  .onSnapshot((snapshot) => {
+    snapshot.docChanges().forEach((change) => {
+      const order = { id: change.doc.id, ...change.doc.data() };
+      const branch = order.branch;
+
+      if (branchGroups.has(branch)) {
+        branchGroups.get(branch).forEach((client) => {
+          if (client.readyState === client.OPEN) {
+            client.send(
+              JSON.stringify({
+                type: "order-updated",
+                order,
+              })
+            );
+          }
+        });
+      }
+    });
+  });
+
+// 📩 Notificación para WhatsApp inbox
 server.on('request', async (req, res) => {
   const parsed = url.parse(req.url, true);
 
   if (req.method === 'POST' && parsed.pathname === '/notify-whatsapp') {
-    // Emitir evento a todos los clientes conectados
     allClients.forEach((client) => {
       if (client.readyState === client.OPEN) {
         client.send(JSON.stringify({ type: 'whatsapp-new-message' }));
