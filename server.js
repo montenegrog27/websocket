@@ -153,10 +153,48 @@ server.on('request', async (req, res) => {
 
     res.writeHead(200);
     res.end('Notificación enviada a todos los clientes WebSocket.');
-  } else {
-    res.writeHead(404);
-    res.end('Not found');
+  } else if (req.method === 'POST' && parsed.pathname === '/notify-kds') {
+    let body = '';
+    req.on('data', chunk => (body += chunk));
+    req.on('end', () => {
+      try {
+        const { branch } = JSON.parse(body);
+        if (branch && branchGroups.has(branch)) {
+          const ordersRef = db
+            .collection("orders")
+            .where("branch", "==", branch)
+            .where("status", "in", ["preparing", "ready_to_send"]);
+
+          ordersRef.get().then((snap) => {
+            snap.forEach((doc) => {
+              const order = { id: doc.id, ...doc.data() };
+              branchGroups.get(branch).forEach((client) => {
+                if (client.readyState === client.OPEN) {
+                  client.send(
+                    JSON.stringify({
+                      type: "order-updated",
+                      order,
+                    })
+                  );
+                }
+              });
+            });
+          });
+        }
+
+        res.writeHead(200);
+        res.end("Notificación enviada al KDS.");
+      } catch (err) {
+        console.error("❌ Error procesando notify-kds:", err);
+        res.writeHead(500);
+        res.end("Error procesando la notificación");
+      }
+    });
+
   }
+
+
+
 });
 
 server.listen(port, () => {
