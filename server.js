@@ -119,8 +119,8 @@ wss.on('connection', (ws) => {
 
 // 🔁 Escuchar en Firestore cambios en órdenes activas
 db.collection("orders")
-  .where("status", "in", ["ready_to_send", "preparing"])
-  .onSnapshot((snapshot) => {
+  .where("status", "in", ["pending", "preparing", "ready_to_send"])
+    .onSnapshot((snapshot) => {
     snapshot.docChanges().forEach((change) => {
       const order = { id: change.doc.id, ...change.doc.data() };
       const branch = order.branch;
@@ -153,44 +153,37 @@ server.on('request', async (req, res) => {
 
     res.writeHead(200);
     res.end('Notificación enviada a todos los clientes WebSocket.');
-  } else if (req.method === 'POST' && parsed.pathname === '/notify-kds') {
+  }   else if (req.method === 'POST' && parsed.pathname === '/notify-kds') {
     let body = '';
-    req.on('data', chunk => (body += chunk));
+    req.on('data', chunk => {
+      body += chunk.toString();
+    });
+
     req.on('end', () => {
       try {
         const { branch } = JSON.parse(body);
-        if (branch && branchGroups.has(branch)) {
-          const ordersRef = db
-            .collection("orders")
-            .where("branch", "==", branch)
-            .where("status", "in", ["preparing", "ready_to_send"]);
+        if (!branch) {
+          res.writeHead(400);
+          return res.end('Falta branch');
+        }
 
-          ordersRef.get().then((snap) => {
-            snap.forEach((doc) => {
-              const order = { id: doc.id, ...doc.data() };
-              branchGroups.get(branch).forEach((client) => {
-                if (client.readyState === client.OPEN) {
-                  client.send(
-                    JSON.stringify({
-                      type: "order-updated",
-                      order,
-                    })
-                  );
-                }
-              });
-            });
+        if (branchGroups.has(branch)) {
+          const clients = branchGroups.get(branch);
+          clients.forEach((client) => {
+            if (client.readyState === client.OPEN) {
+              client.send(JSON.stringify({ type: 'reload-orders' }));
+            }
           });
         }
 
         res.writeHead(200);
-        res.end("Notificación enviada al KDS.");
+        res.end('Notificación enviada al branch');
       } catch (err) {
-        console.error("❌ Error procesando notify-kds:", err);
+        console.error("❌ Error en /notify-kds:", err);
         res.writeHead(500);
-        res.end("Error procesando la notificación");
+        res.end('Error interno');
       }
     });
-
   }
 
 
