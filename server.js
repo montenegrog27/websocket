@@ -120,26 +120,28 @@ wss.on('connection', (ws) => {
 // 🔁 Escuchar en Firestore cambios en órdenes activas
 db.collection("orders")
   .where("status", "in", ["pending", "preparing", "ready_to_send"])
-    .onSnapshot((snapshot) => {
-snapshot.docChanges().forEach((change) => {
-  if (["added", "modified"].includes(change.type)) {
-    const order = { id: change.doc.id, ...change.doc.data() };
-    const branch = order.branch;
+  .onSnapshot((snapshot) => {
+    snapshot.docChanges().forEach((change) => {
+      if (["added", "modified"].includes(change.type)) {
+        const order = { id: change.doc.id, ...change.doc.data() };
+        const branch = order.branch;
 
-    if (branchGroups.has(branch)) {
-      branchGroups.get(branch).forEach((client) => {
-        if (client.readyState === client.OPEN) {
-          client.send(
-            JSON.stringify({
-              type: "order-updated",
-              order,
-            })
-          );
+        if (branchGroups.has(branch)) {
+          branchGroups.get(branch).forEach((client) => {
+            if (client.readyState === client.OPEN) {
+              client.send(
+                JSON.stringify({
+                  type: "order-updated",
+                  order,
+                })
+              );
+            }
+          });
         }
-      });
-    }
-  }
-});
+      }
+    });
+  }); // <-- CIERRE correcto del onSnapshot
+
 
 
 // 📩 Notificación para WhatsApp inbox
