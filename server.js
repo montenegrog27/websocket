@@ -121,24 +121,26 @@ wss.on('connection', (ws) => {
 db.collection("orders")
   .where("status", "in", ["pending", "preparing", "ready_to_send"])
     .onSnapshot((snapshot) => {
-    snapshot.docChanges().forEach((change) => {
-      const order = { id: change.doc.id, ...change.doc.data() };
-      const branch = order.branch;
+snapshot.docChanges().forEach((change) => {
+  if (["added", "modified"].includes(change.type)) {
+    const order = { id: change.doc.id, ...change.doc.data() };
+    const branch = order.branch;
 
-      if (branchGroups.has(branch)) {
-        branchGroups.get(branch).forEach((client) => {
-          if (client.readyState === client.OPEN) {
-            client.send(
-              JSON.stringify({
-                type: "order-updated",
-                order,
-              })
-            );
-          }
-        });
-      }
-    });
-  });
+    if (branchGroups.has(branch)) {
+      branchGroups.get(branch).forEach((client) => {
+        if (client.readyState === client.OPEN) {
+          client.send(
+            JSON.stringify({
+              type: "order-updated",
+              order,
+            })
+          );
+        }
+      });
+    }
+  }
+});
+
 
 // 📩 Notificación para WhatsApp inbox
 server.on('request', async (req, res) => {
