@@ -1,203 +1,190 @@
-
-
-import { WebSocketServer } from 'ws';
-import http from 'http';
-import dotenv from 'dotenv';
-import admin from 'firebase-admin';
-import url from 'url';
+import { WebSocketServer } from "ws";
+import http from "http";
+import dotenv from "dotenv";
+import admin from "firebase-admin";
+import axios from "axios";
 
 dotenv.config();
 
+// -------------------------------
+// 🔥 Inicializar Firebase Admin
+// -------------------------------
 admin.initializeApp({
   credential: admin.credential.cert({
     projectId: process.env.FIREBASE_PROJECT_ID,
     clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-    privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
-  }),
+    privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, "\n")
+  })
 });
 
-
 const db = admin.firestore();
+
+// ------------------------------------
+// 🔥 WebSocket Server
+// ------------------------------------
 const port = process.env.PORT || 3001;
 const server = http.createServer();
-
 const wss = new WebSocketServer({ server });
 
-const trackingGroups = new Map(); // seguimiento por trackingId
-const branchGroups = new Map(); // seguimiento por sucursal (para cocina)
+// 🔹 Todas las conexiones
 const allClients = new Set();
 
-wss.on('connection', (ws) => {
-  let joinedTrackingId = null;
-  let joinedBranch = null;
+// 🔹 Map: mesaKey → Set(ws)
+// mesaKey = `${slug}:${mesaId}`
+const mesaGroups = new Map();
 
+// 🔹 Cache local de mesas activas
+// mesaKey → { slug, mesaId, saleId, lastUpdatedAt }
+let mesasActivas = new Map();
+
+// ------------------------------------
+// 🔥 Conexión del cliente
+// ------------------------------------
+wss.on("connection", (ws) => {
   allClients.add(ws);
 
-  ws.on('message', async (msg) => {
+  ws.on("message", (msg) => {
     try {
       const data = JSON.parse(msg);
 
-      // 🔸 Cliente quiere seguir un pedido por trackingId
-      if (data.type === 'join' && data.trackingId) {
-        joinedTrackingId = data.trackingId;
+      // Cliente se une a una mesa
+      if (data.type === "join-mesa" && data.slug && data.mesaId) {
+        const mesaKey = `${data.slug}:${data.mesaId}`;
 
-        if (!trackingGroups.has(joinedTrackingId)) {
-          trackingGroups.set(joinedTrackingId, new Set());
+        if (!mesaGroups.has(mesaKey)) {
+          mesaGroups.set(mesaKey, new Set());
         }
-        trackingGroups.get(joinedTrackingId).add(ws);
+        mesaGroups.get(mesaKey).add(ws);
 
-        const snap = await db
-          .collection('orders')
-          .where('trackingId', '==', joinedTrackingId)
-          .limit(1)
-          .get();
-
-        if (!snap.empty) {
-          const order = snap.docs[0].data();
-          ws.send(
-            JSON.stringify({
-              type: 'status',
-              status: order.status || 'preparing',
-            })
-          );
-        }
-
+        ws.mesaKey = mesaKey;
         return;
-      }
-
-      // 🔸 Cliente se une a una sucursal (KDS)
-      if (data.type === 'join-branch' && data.branch) {
-        joinedBranch = data.branch;
-
-        if (!branchGroups.has(joinedBranch)) {
-          branchGroups.set(joinedBranch, new Set());
-        }
-        branchGroups.get(joinedBranch).add(ws);
-        return;
-      }
-
-      // 🔸 Ubicación del rider
-      if (data.type === 'location' && data.trackingId && data.lat && data.lng) {
-        const group = trackingGroups.get(data.trackingId);
-        if (group) {
-          group.forEach((client) => {
-            if (client.readyState === ws.OPEN) {
-              client.send(
-                JSON.stringify({
-                  type: 'update',
-                  lat: data.lat,
-                  lng: data.lng,
-                })
-              );
-            }
-          });
-        }
       }
     } catch (err) {
-      console.error('❌ Error handling message:', err);
+      console.error("❌ Error parsing message:", err);
     }
   });
 
-  ws.on('close', () => {
+  ws.on("close", () => {
     allClients.delete(ws);
 
-    if (joinedTrackingId && trackingGroups.has(joinedTrackingId)) {
-      trackingGroups.get(joinedTrackingId).delete(ws);
-      if (trackingGroups.get(joinedTrackingId).size === 0) {
-        trackingGroups.delete(joinedTrackingId);
-      }
-    }
+    if (ws.mesaKey && mesaGroups.has(ws.mesaKey)) {
+      mesaGroups.get(ws.mesaKey).delete(ws);
 
-    if (joinedBranch && branchGroups.has(joinedBranch)) {
-      branchGroups.get(joinedBranch).delete(ws);
-      if (branchGroups.get(joinedBranch).size === 0) {
-        branchGroups.delete(joinedBranch);
+      if (mesaGroups.get(ws.mesaKey).size === 0) {
+        mesaGroups.delete(ws.mesaKey);
       }
     }
   });
 });
 
-// 🔁 Escuchar en Firestore cambios en órdenes activas
-db.collection("orders")
-  .where("status", "in", ["pending", "preparing", "ready_to_send"])
-.onSnapshot((snapshot) => {
-  snapshot.docChanges().forEach((change) => {
-    if (["added", "modified"].includes(change.type)) {
-      const order = { id: change.doc.id, ...change.doc.data() };
-      const branch = order.branch;
+// ------------------------------------
+// 🔥 Cargar mesas activas desde Firestore
+// ------------------------------------
+async function cargarMesasActivas() {
+  const negocios = await db.collection("negocios").get();
 
-      console.log("🟡 Cambio detectado:", change.type, order.status);
+  negocios.forEach(async (negocioDoc) => {
+    const slug = negocioDoc.id;
+    const mesasSnap = await db.collection("negocios").doc(slug).collection("mesas").get();
 
-      if (branchGroups.has(branch)) {
-        branchGroups.get(branch).forEach((client) => {
+    mesasSnap.forEach((mesaDoc) => {
+      const data = mesaDoc.data();
+      const mesaId = mesaDoc.id;
+
+      if (data.saleId) {
+        const mesaKey = `${slug}:${mesaId}`;
+
+        mesasActivas.set(mesaKey, {
+          slug,
+          mesaId,
+          saleId: data.saleId,
+          lastUpdatedAt: null
+        });
+      }
+    });
+  });
+
+  console.log("🔥 Mesas activas cargadas:", mesasActivas.size);
+}
+
+// Ejecutar al iniciar
+cargarMesasActivas();
+
+// ------------------------------------
+// 🔥 Token Fudo (apiKey + apiSecret)
+// ------------------------------------
+async function getFudoToken(slug) {
+  const negocioSnap = await db.collection("negocios").doc(slug).get();
+  const negocio = negocioSnap.data();
+
+  const { apiKey, apiSecret } = negocio.fudo;
+
+  const res = await axios.post("https://auth.fu.do/api", {
+    apiKey,
+    apiSecret
+  });
+
+  return res.data.token;
+}
+
+// ------------------------------------
+// 🔥 Chequear actualizaciones en Fudo
+// ------------------------------------
+async function checkMesa(mesa) {
+  try {
+    const token = await getFudoToken(mesa.slug);
+
+    const saleRes = await axios.get(
+      `https://api.fu.do/v1alpha1/sales/${mesa.saleId}?include=items`,
+      {
+        headers: { Authorization: `Bearer ${token}` }
+      }
+    );
+
+    const sale = saleRes.data.data;
+
+    const updatedAt = sale.attributes.updatedAt;
+
+    // Si es la primera vez → almacenar
+    if (!mesa.lastUpdatedAt) {
+      mesa.lastUpdatedAt = updatedAt;
+      return;
+    }
+
+    // Si cambió updatedAt → notificar a los clientes
+    if (mesa.lastUpdatedAt !== updatedAt) {
+      mesa.lastUpdatedAt = updatedAt;
+
+      const mesaKey = `${mesa.slug}:${mesa.mesaId}`;
+
+      if (mesaGroups.has(mesaKey)) {
+        mesaGroups.get(mesaKey).forEach((client) => {
           if (client.readyState === client.OPEN) {
-            console.log("📤 Enviando a cliente del branch:", branch, order);
-            client.send(
-              JSON.stringify({
-                type: "order-updated",
-                order,
-              })
-            );
+            client.send(JSON.stringify({ type: "venta-actualizada" }));
           }
         });
       }
+
+      console.log(`🔔 Mesa ${mesaKey} actualizada`);
     }
-  });
-});
 
-
-
-
-// 📩 Notificación para WhatsApp inbox
-server.on('request', async (req, res) => {
-  const parsed = url.parse(req.url, true);
-
-  if (req.method === 'POST' && parsed.pathname === '/notify-whatsapp') {
-    allClients.forEach((client) => {
-      if (client.readyState === client.OPEN) {
-        client.send(JSON.stringify({ type: 'whatsapp-new-message' }));
-      }
-    });
-
-    res.writeHead(200);
-    res.end('Notificación enviada a todos los clientes WebSocket.');
-  }   else if (req.method === 'POST' && parsed.pathname === '/notify-kds') {
-    let body = '';
-    req.on('data', chunk => {
-      body += chunk.toString();
-    });
-
-    req.on('end', () => {
-      try {
-        const { branch } = JSON.parse(body);
-        if (!branch) {
-          res.writeHead(400);
-          return res.end('Falta branch');
-        }
-
-        if (branchGroups.has(branch)) {
-          const clients = branchGroups.get(branch);
-          clients.forEach((client) => {
-            if (client.readyState === client.OPEN) {
-              client.send(JSON.stringify({ type: 'reload-orders' }));
-            }
-          });
-        }
-
-        res.writeHead(200);
-        res.end('Notificación enviada al branch');
-      } catch (err) {
-        console.error("❌ Error en /notify-kds:", err);
-        res.writeHead(500);
-        res.end('Error interno');
-      }
-    });
+  } catch (err) {
+    console.error("❌ Error checking sale:", err?.response?.data || err.message);
   }
+}
 
+// ------------------------------------
+// 🔁 Polling cada 15 segundos
+// ------------------------------------
+setInterval(async () => {
+  for (const [mesaKey, mesa] of mesasActivas.entries()) {
+    await checkMesa(mesa);
+  }
+}, 15000);
 
-
-});
-
+// ------------------------------------
+// 🚀 Iniciar servidor
+// ------------------------------------
 server.listen(port, () => {
-  console.log(`✅ WebSocket server running on port ${port}`);
+  console.log(`✅ WS Mesas running on port ${port}`);
 });
