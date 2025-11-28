@@ -182,6 +182,37 @@ setInterval(async () => {
   }
 }, 15000);
 
+
+import express from "express";
+
+const app = express();
+app.use(express.json());
+
+// El WebSocket server y Express comparten el mismo server http
+server.on("request", app);
+
+// Ruta para broadcast desde Fudo webhook
+app.post("/broadcast", (req, res) => {
+  const { mesaKey, type } = req.body;
+
+  if (!mesaKey || !type) {
+    return res.status(400).json({ error: "Invalid payload" });
+  }
+
+  console.log("📣 Broadcast WS:", mesaKey, type);
+
+  if (mesaGroups.has(mesaKey)) {
+    mesaGroups.get(mesaKey).forEach((client) => {
+      if (client.readyState === client.OPEN) {
+        client.send(JSON.stringify({ type }));
+      }
+    });
+  }
+
+  return res.json({ ok: true });
+});
+
+
 // 🚀 Iniciar servidor
 // ------------------------------------
 server.listen(port, () => {
