@@ -6,9 +6,27 @@ import axios from "axios";
 
 dotenv.config();
 
-// -------------------------------
 // 🔥 Inicializar Firebase Admin
-const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+// -------------------------------
+if (!process.env.FIREBASE_SERVICE_ACCOUNT) {
+  console.error("❌ ERROR: No existe FIREBASE_SERVICE_ACCOUNT en Railway!");
+  process.exit(1);
+}
+
+let serviceAccount;
+
+try {
+  serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+} catch (err) {
+  console.error("❌ ERROR al parsear FIREBASE_SERVICE_ACCOUNT:", err.message);
+  process.exit(1);
+}
+
+if (!serviceAccount.private_key) {
+  console.error("❌ ERROR: private_key no existe dentro del JSON de service account");
+  console.log("ServiceAccount keys:", Object.keys(serviceAccount));
+  process.exit(1);
+}
 
 admin.initializeApp({
   credential: admin.credential.cert({
@@ -16,6 +34,8 @@ admin.initializeApp({
     privateKey: serviceAccount.private_key.replace(/\\n/g, "\n"),
   }),
 });
+
+console.log("🔥 Firebase Admin inicializado correctamente");
 
 
 const db = admin.firestore();
