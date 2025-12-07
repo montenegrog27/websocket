@@ -1,9 +1,11 @@
 import express from "express";
 import { Client, LocalAuth } from "whatsapp-web.js";
 import qrcode from "qrcode";
+import cors from "cors";
 
-const app = express();
 const port = process.env.PORT || 3001;
+const app = express();
+app.use(cors()); // 👈 Agrega esta línea
 
 // Middleware básico
 app.use(express.json());
