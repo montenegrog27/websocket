@@ -74,3 +74,29 @@ app.get("/api/whatsapp/qrcode", async (req, res) => {
 app.listen(port, () => {
   console.log(`🚀 Servidor escuchando en puerto ${port}`);
 });
+
+
+app.use(express.json());
+
+app.post("/api/whatsapp/send", async (req, res) => {
+  const { phone, slug, message } = req.body;
+
+  if (!phone || !slug || !message) {
+    return res.status(400).json({ error: "Faltan datos: phone, slug o message." });
+  }
+
+  const client = sessions.get(slug);
+
+  if (!client || !client.info) {
+    return res.status(503).json({ error: "WhatsApp no está conectado para este negocio." });
+  }
+
+  try {
+    await client.sendMessage(`${phone}@c.us`, message);
+    console.log(`✅ Mensaje enviado a ${phone} desde ${slug}`);
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error(`❌ Error enviando mensaje a ${phone}:`, err.message);
+    return res.status(500).json({ error: "Error enviando mensaje." });
+  }
+});
