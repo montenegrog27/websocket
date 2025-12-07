@@ -9,8 +9,29 @@ const app = express();
 const port = process.env.PORT || 3001;
 
 app.use(cors());
+app.use(express.json());
 
 const sessions = new Map(); // Map slug -> client
+
+app.post("/api/whatsapp/logout", async (req, res) => {
+  const { slug } = req.body;
+  const client = sessions.get(slug);
+
+  if (!client) {
+    return res.status(400).json({ error: "Sesión no encontrada." });
+  }
+
+  try {
+    await client.logout();
+    await client.destroy();
+    sessions.delete(slug);
+    console.log(`🔒 Sesión cerrada para ${slug}`);
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error(`❌ Error cerrando sesión para ${slug}:`, e);
+    return res.status(500).json({ error: "Error cerrando sesión." });
+  }
+});
 
 app.get("/api/whatsapp/qrcode", async (req, res) => {
   const { slug } = req.query;
