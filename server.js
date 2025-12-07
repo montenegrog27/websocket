@@ -1,23 +1,21 @@
 import express from "express";
-import { Client, LocalAuth } from "whatsapp-web.js";
-import qrcode from "qrcode";
 import cors from "cors";
+import qrcode from "qrcode";
+import whatsapp from "whatsapp-web.js";
 
-const port = process.env.PORT || 3001;
+const { Client, LocalAuth } = whatsapp;
+
 const app = express();
-app.use(cors()); // 👈 Agrega esta línea
+const port = process.env.PORT || 3001;
 
-// Middleware básico
-app.use(express.json());
+app.use(cors());
 
 const sessions = new Map(); // slug -> client
 
-// Ruta para obtener QR
 app.get("/api/whatsapp/qrcode", async (req, res) => {
   const { slug } = req.query;
   if (!slug) return res.status(400).json({ error: "slug requerido" });
 
-  // Si ya hay una sesión activa
   if (sessions.has(slug)) {
     const client = sessions.get(slug);
     if (client.info) {
@@ -25,49 +23,25 @@ app.get("/api/whatsapp/qrcode", async (req, res) => {
     }
   }
 
-  // Crear nuevo cliente WhatsApp
   const client = new Client({
     authStrategy: new LocalAuth({ clientId: slug }),
-    puppeteer: {
-      headless: true,
-      args: ["--no-sandbox", "--disable-setuid-sandbox"],
-    },
+    puppeteer: { headless: true, args: ["--no-sandbox"] },
   });
 
   sessions.set(slug, client);
 
-  // Mostrar QR solo una vez
-  let qrSent = false;
   client.on("qr", async (qr) => {
-    if (!qrSent) {
-      qrSent = true;
-      const qrImage = await qrcode.toDataURL(qr);
-      res.json({ qr: qrImage });
-    }
+    const qrImage = await qrcode.toDataURL(qr);
+    res.json({ qr: qrImage });
   });
 
   client.on("ready", () => {
     console.log(`✅ WhatsApp conectado para ${slug}`);
   });
 
-  client.on("auth_failure", (msg) => {
-    console.error(`❌ Fallo de autenticación (${slug}):`, msg);
-  });
-
-  client.on("disconnected", (reason) => {
-    console.warn(`🔌 Sesión desconectada (${slug}):`, reason);
-    sessions.delete(slug);
-  });
-
   client.initialize();
 });
 
-// Ruta raíz (opcional)
-app.get("/", (req, res) => {
-  res.send("✅ WhatsApp backend corriendo.");
-});
-
-// Start server
 app.listen(port, () => {
-  console.log(`🚀 Servidor WhatsApp en http://localhost:${port}`);
+  console.log(`🚀 Servidor escuchando en puerto ${port}`);
 });
