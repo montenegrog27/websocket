@@ -57,25 +57,35 @@ app.get("/api/whatsapp/qrcode", async (req, res) => {
   // Crear nuevo cliente
   const client = new Client({
     authStrategy: new LocalAuth({ clientId: slug }),
-    puppeteer: { headless: true, args: ["--no-sandbox"] },
+    puppeteer: {
+      headless: true,
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-accelerated-2d-canvas",
+        "--no-first-run",
+        "--no-zygote",
+        "--single-process",
+        "--disable-gpu",
+      ],
+    },
   });
 
   sessions.set(slug, client);
 
-  // Seguridad: si en 15s no pasa nada, devolvemos timeout
+  // Seguridad: timeout si no se genera el QR
   const timeout = setTimeout(() => {
     console.log(`⏱️ Timeout esperando QR para ${slug}`);
     res.status(504).json({ error: "Timeout generando QR" });
   }, 15000);
 
-  // Solo respondemos una vez con el QR
   client.once("qr", async (qr) => {
     clearTimeout(timeout);
     const qrImage = await qrcode.toDataURL(qr);
     res.json({ qr: qrImage });
   });
 
-  // Cliente listo
   client.on("ready", () => {
     console.log(`✅ WhatsApp conectado para ${slug}`);
   });
@@ -89,15 +99,11 @@ app.get("/api/whatsapp/qrcode", async (req, res) => {
     sessions.delete(slug);
   });
 
-  client.initialize();
+  // Capturar errores de inicialización
+  client.initialize().catch((err) => {
+    console.error(`❌ Error inicializando cliente (${slug}):`, err);
+  });
 });
-
-app.listen(port, () => {
-  console.log(`🚀 Servidor escuchando en puerto ${port}`);
-});
-
-
-app.use(express.json());
 
 app.post("/api/whatsapp/send", async (req, res) => {
   const { phone, slug, message } = req.body;
@@ -115,9 +121,8 @@ app.post("/api/whatsapp/send", async (req, res) => {
   try {
     const chatId = `${phone}@c.us`;
 
-    // 👉 Esto evita el error de 'markedUnread'
+    // 👇 Esto evita el error de 'markedUnread'
     const chat = await client.getChatById(chatId);
-
     if (!chat) {
       return res.status(404).json({ error: "No se pudo obtener el chat." });
     }
@@ -132,3 +137,6 @@ app.post("/api/whatsapp/send", async (req, res) => {
   }
 });
 
+app.listen(port, () => {
+  console.log(`🚀 Servidor escuchando en puerto ${port}`);
+});
