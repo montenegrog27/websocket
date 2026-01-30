@@ -109,33 +109,29 @@ app.post("/api/whatsapp/send", async (req, res) => {
   const { phone, slug, message } = req.body;
 
   if (!phone || !slug || !message) {
-    return res.status(400).json({ error: "Faltan datos: phone, slug o message." });
+    return res.status(400).json({ error: "Faltan datos" });
   }
 
   const client = sessions.get(slug);
 
   if (!client || !client.info) {
-    return res.status(503).json({ error: "WhatsApp no está conectado para este negocio." });
+    return res.status(503).json({ error: "WhatsApp no conectado" });
   }
 
   try {
     const chatId = `${phone}@c.us`;
 
-    // 👇 Esto evita el error de 'markedUnread'
-    const chat = await client.getChatById(chatId);
-    if (!chat) {
-      return res.status(404).json({ error: "No se pudo obtener el chat." });
-    }
-
     await client.sendMessage(chatId, message);
-    console.log(`✅ Mensaje enviado a ${phone} desde ${slug}`);
+
+    console.log(`✅ Mensaje enviado a ${phone} (${slug})`);
     return res.json({ ok: true });
 
   } catch (err) {
-    console.error(`❌ Error enviando mensaje a ${phone}:`, err);
-    return res.status(500).json({ error: "Error enviando mensaje." });
+    console.error("❌ Error enviando WhatsApp:", err);
+    return res.status(500).json({ error: "Error enviando mensaje" });
   }
 });
+
 
 app.listen(port, () => {
   console.log(`🚀 Servidor escuchando en puerto ${port}`);
