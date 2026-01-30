@@ -86,9 +86,21 @@ app.get("/api/whatsapp/qrcode", async (req, res) => {
     res.json({ qr: qrImage });
   });
 
-  client.on("ready", () => {
-    console.log(`✅ WhatsApp conectado para ${slug}`);
-  });
+client.on("ready", async () => {
+  console.log(`✅ WhatsApp conectado para ${slug}`);
+
+  try {
+    await client.pupPage.evaluate(() => {
+      if (window.WWebJS?.sendSeen) {
+        window.WWebJS.sendSeen = async () => {};
+      }
+    });
+    console.log("🛡️ sendSeen desactivado");
+  } catch (e) {
+    console.warn("⚠️ No se pudo desactivar sendSeen", e);
+  }
+});
+
 
   client.on("auth_failure", (msg) => {
     console.error(`❌ Falló la autenticación (${slug}):`, msg);
@@ -123,12 +135,12 @@ app.post("/api/whatsapp/send", async (req, res) => {
 
     await client.sendMessage(chatId, message);
 
-    console.log(`✅ Mensaje enviado a ${phone} (${slug})`);
+    console.log(`✅ WhatsApp enviado a ${phone} (${slug})`);
     return res.json({ ok: true });
 
   } catch (err) {
     console.error("❌ Error enviando WhatsApp:", err);
-    return res.status(500).json({ error: "Error enviando mensaje" });
+    return res.status(500).json({ error: "Error enviando WhatsApp" });
   }
 });
 
