@@ -113,11 +113,22 @@ app.post("/api/whatsapp/send", async (req, res) => {
   }
 
   try {
-    await client.sendMessage(`${phone}@c.us`, message);
+    const chatId = `${phone}@c.us`;
+
+    // 👉 Esto evita el error de 'markedUnread'
+    const chat = await client.getChatById(chatId);
+
+    if (!chat) {
+      return res.status(404).json({ error: "No se pudo obtener el chat." });
+    }
+
+    await client.sendMessage(chatId, message);
     console.log(`✅ Mensaje enviado a ${phone} desde ${slug}`);
     return res.json({ ok: true });
+
   } catch (err) {
-    console.error(`❌ Error enviando mensaje a ${phone}:`, err.message);
+    console.error(`❌ Error enviando mensaje a ${phone}:`, err);
     return res.status(500).json({ error: "Error enviando mensaje." });
   }
 });
+
