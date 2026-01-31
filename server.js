@@ -26,18 +26,17 @@ app.post("/api/whatsapp/logout", async (req, res) => {
   if (!client) {
     return res.status(400).json({ error: "Sesión no encontrada." });
   }
-
-  try {
-    await client.logout();
-    await client.destroy();
+try {
+  if (client) {
+    try { await client.logout(); } catch {}
+    try { await client.destroy(); } catch {}
     sessions.delete(slug);
-
-    console.log(`🔒 [${slug}] Sesión cerrada`);
-    return res.json({ ok: true });
-  } catch (e) {
-    console.error(`❌ [${slug}] Error cerrando sesión`, e);
-    return res.status(500).json({ error: "Error cerrando sesión." });
   }
+  return res.json({ ok: true });
+} catch (e) {
+  return res.status(500).json({ error: "Error cerrando sesión." });
+}
+
 });
 
 /* ===============================
@@ -49,15 +48,11 @@ app.get("/api/whatsapp/qrcode", async (req, res) => {
 
   console.log(`🧪 [${slug}] QR solicitado`);
 
-  // Si hay sesión viva y lista → devolver connected
   if (sessions.has(slug)) {
     const existing = sessions.get(slug);
-
     if (existing.__isReady) {
       return res.json({ connected: true });
     }
-
-    // Sesión rota → limpiamos
     try {
       await existing.destroy();
     } catch {}
@@ -72,51 +67,60 @@ app.get("/api/whatsapp/qrcode", async (req, res) => {
         "--no-sandbox",
         "--disable-setuid-sandbox",
         "--disable-dev-shm-usage",
-        "--disable-accelerated-2d-canvas",
-        "--no-first-run",
         "--no-zygote",
-        "--single-process",
         "--disable-gpu",
       ],
     },
   });
 
-  // 👇 bandera CLAVE
   client.__isReady = false;
-
   sessions.set(slug, client);
 
-  // Timeout defensivo
+  let responded = false;
+  const reply = (fn) => {
+    if (responded) return;
+    responded = true;
+    fn();
+  };
+
   const timeout = setTimeout(() => {
     console.warn(`⏱️ [${slug}] Timeout esperando QR`);
-    res.status(504).json({ error: "Timeout generando QR" });
-  }, 15000);
+    reply(() =>
+      res.status(504).json({ error: "Timeout generando QR" }),
+    );
+  }, 20000);
 
   client.once("qr", async (qr) => {
     clearTimeout(timeout);
     console.log(`📸 [${slug}] QR generado`);
     const qrImage = await qrcode.toDataURL(qr);
-    res.json({ qr: qrImage });
+    reply(() => res.json({ qr: qrImage }));
   });
 
-  client.on("ready", () => {
+  client.once("ready", () => {
     console.log(`✅ [${slug}] WhatsApp READY`);
     client.__isReady = true;
   });
 
-  client.on("auth_failure", (msg) => {
+  client.once("auth_failure", (msg) => {
     console.error(`❌ [${slug}] Auth failure`, msg);
   });
 
-  client.on("disconnected", (reason) => {
+  client.once("disconnected", (reason) => {
     console.warn(`🔌 [${slug}] Desconectado`, reason);
     sessions.delete(slug);
   });
 
-  client.initialize().catch((err) => {
-    console.error(`❌ [${slug}] Error inicializando cliente`, err);
-  });
+client.initialize().catch((err) => {
+  clearTimeout(timeout);
+  console.error(`❌ [${slug}] Error inicializando cliente`, err);
+  reply(() =>
+    res.status(500).json({ error: "Error inicializando WhatsApp" }),
+  );
 });
+
+});
+
 
 /* ===============================
    ENVIAR MENSAJE
