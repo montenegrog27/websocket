@@ -1,0 +1,9 @@
+2026/02/01-16:08:48.789 51ec Reusing MANIFEST C:\Users\germa\Desktop\mordisco-ws\.wwebjs_auth\session-mordisco_santafe1583\Default\Local Storage\leveldb/MANIFEST-000001
+2026/02/01-16:08:48.798 51ec Recovering log #4
+2026/02/01-16:08:48.800 51ec Reusing old log C:\Users\germa\Desktop\mordisco-ws\.wwebjs_auth\session-mordisco_santafe1583\Default\Local Storage\leveldb/000004.log 
+2026/02/01-21:47:55.522 56f4 Level-0 table #7: started
+2026/02/01-21:47:55.541 56f4 Level-0 table #7: 15700 bytes OK
+2026/02/01-21:47:55.550 56f4 Delete type=0 #4
+2026/02/01-23:59:23.015 56f4 Level-0 table #9: started
+2026/02/01-23:59:23.028 56f4 Level-0 table #9: 16235 bytes OK
+2026/02/01-23:59:23.033 56f4 Delete type=0 #6
